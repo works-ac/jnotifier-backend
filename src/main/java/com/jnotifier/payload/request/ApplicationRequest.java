@@ -30,7 +30,7 @@ public class ApplicationRequest {
     private String viewPageDescription;
 
     @NotNull(message = "Apply link is required")
-    @Size(max = 100)
+    @Size(max = 250)
     private String applyLink;
 
     private Boolean status;

@@ -326,7 +326,8 @@ public class AuthController {
                     .orElseThrow(() -> new RuntimeException("Error: USER role not initialized in database."));
         }
 
-        if (userRole.getName().name().equalsIgnoreCase(ERole.ROLE_SUPERADMIN.name()))
+        if (userRole.getName().name().equalsIgnoreCase(ERole.ROLE_SUPERADMIN.name()) ||
+                userRole.getName().name().equalsIgnoreCase(ERole.ROLE_SYSADMIN.name()))
             throw new GenericException(ApiResponse.error("INVALID_ROLE", "Please enter a valid role"));
 
         if (userRole.getName().name().equalsIgnoreCase(ERole.ROLE_ADMIN.name()) && (signUpRequest.getCompanyName() == null || signUpRequest.getAddress() == null))

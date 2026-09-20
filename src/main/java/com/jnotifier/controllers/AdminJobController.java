@@ -2,13 +2,13 @@ package com.jnotifier.controllers;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.List;
 
 import com.jnotifier.app.JNotifierConstants;
 import com.jnotifier.exception.GenericException;
 import com.jnotifier.helpers.FileHelper;
 import com.jnotifier.payload.request.ApplicationStatusRequest;
-import com.jnotifier.payload.response.JobApplicationResponse;
 import com.jnotifier.payload.response.ProtectedJobApplicationResponse;
 import com.jnotifier.services.core.FileStorageService;
 import jakarta.validation.Valid;
@@ -96,6 +96,18 @@ public class AdminJobController {
 
             request.setAdvFileName("/uploads/" + fileStorageService.saveFile(advFile));
         }
+
+        // Info: Validating application start and end dates.
+        LocalDate applicationStartDate = request.getApplicationStartDate();
+        LocalDate applicationEndDate = request.getApplicationEndDate();
+        LocalDate today = LocalDate.now();
+        LocalDate pastCurrentDate = LocalDate.now().minusDays(10);
+
+        if (applicationStartDate.isBefore(today) && applicationStartDate.isBefore(pastCurrentDate))
+            throw new GenericException(ApiResponse.error("INVALID_APPLICATION_START_DATE", "Invalid application start date"));
+
+        if (applicationEndDate.isBefore(applicationStartDate))
+            throw new GenericException(ApiResponse.error("INVALID_APPLICATION_END_DATE", "Invalid application end date"));
 
         Application saved = applicationService.save(request);
         return ResponseEntity.ok(ApiResponse.success(saved));

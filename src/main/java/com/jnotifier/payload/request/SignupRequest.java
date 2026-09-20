@@ -1,7 +1,6 @@
 package com.jnotifier.payload.request;
 
 import java.time.LocalDate;
-
 import jakarta.validation.constraints.*;
 
 public class SignupRequest {

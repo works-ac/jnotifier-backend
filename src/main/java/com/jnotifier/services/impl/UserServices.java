@@ -144,7 +144,7 @@ public class UserServices implements IUserService {
     public ServiceReply getAllUsersDetailsExceptSA(Pageable pageable) throws GenericException {
         Page<UserDetailsResponse> users = userRepository.findAllUserDetailsExceptSA(pageable).map(user ->
                 new UserDetailsResponse(user.getId(), user.getFullname(), user.getUsername(), user.getEmail(), user.getMobile(), user.getGender(),
-                        user.getAddress(), user.getDob().format(DateTimeFormatter.ofPattern("dd-MM-yyyy")), user.getCategory(),
+                        user.getAddress(), user.getDob() != null ? user.getDob().format(DateTimeFormatter.ofPattern("dd-MM-yyyy")) : null, user.getCategory(),
                         user.getIsPwd(), user.getCompanyName(), user.getRole().getName().name(), user.getIsSuspended(),
                         user.getIsDeleted(), user.getIsEmailVerified()));
         Map<String, Object> reply = new HashMap<>();

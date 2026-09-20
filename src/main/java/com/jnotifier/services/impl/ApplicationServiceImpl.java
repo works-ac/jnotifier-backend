@@ -48,6 +48,7 @@ public class ApplicationServiceImpl implements ApplicationService {
     @Override
     public Application update(Long id, ApplicationRequest request) {
         Application application = findById(id);
+
         application.setTitle(request.getTitle());
         application.setTags(request.getTags());
         application.setApplicationStartDate(request.getApplicationStartDate());

@@ -41,7 +41,6 @@ public class User extends BaseEntity {
     @Column(name = "mobile")
     private String mobile;
 
-    @NotNull
     @Column(name = "dob")
     private LocalDate dob;
 

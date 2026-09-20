@@ -46,8 +46,8 @@ public class Application extends BaseEntity {
     @Column(name = "status", nullable = false)
     private Boolean status = true;
 
-    @Size(max = 100)
-    @Column(name = "apply_link", columnDefinition = "VARCHAR(100)")
+    @Size(max = 250)
+    @Column(name = "apply_link", columnDefinition = "VARCHAR(250)")
     private String applyLink;
 
     public Application() {
