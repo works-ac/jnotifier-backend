@@ -9,16 +9,18 @@ public class ProtectedJobApplicationResponse extends JobApplicationResponse {
     private Boolean status;
     private String viewPageDescription;
     private String advUri;
+    private String applyLink;
 
     public ProtectedJobApplicationResponse(String title, String tags, LocalDate applicationStartDate, LocalDate applicationEndDate,
                                            String shortDescription, String advNo, long applicationId, LocalDateTime createdOn,
-                                           LocalDateTime lastUpdatedOn, Boolean status, String viewPageDescription, String advUri) {
+                                           LocalDateTime lastUpdatedOn, Boolean status, String viewPageDescription, String advUri, String applyLink) {
         super(title, tags, applicationStartDate, applicationEndDate, shortDescription, advNo, applicationId);
         this.createdOn = createdOn;
         this.lastUpdatedOn = lastUpdatedOn;
         this.status = status;
         this.viewPageDescription = viewPageDescription;
         this.advUri = advUri;
+        this.applyLink = applyLink;
     }
 
     public LocalDateTime getCreatedOn() {
@@ -59,5 +61,13 @@ public class ProtectedJobApplicationResponse extends JobApplicationResponse {
 
     public void setAdvUri(String advUri) {
         this.advUri = advUri;
+    }
+
+    public  String getApplyLink(){
+        return  applyLink;
+    }
+
+    public void setApplyLink(String applyLink){
+        this.applyLink = applyLink;
     }
 }

@@ -7,7 +7,7 @@ import java.time.LocalDate;
 
 public class ApplicationRequest {
     @NotNull(message = "Job application title is required")
-    @Size(max = 32,message = "Your job application title is too long")
+    @Size(max = 32, message = "Your job application title is too long")
     private String title;
 
     @NotNull(message = "Job application tags are required")

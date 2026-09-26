@@ -11,4 +11,5 @@ d88P  d88P  d88P            888 888    Y888  "Y88P"   "Y888 888 888    888  "Y88
                        888P"
 Job Notifier
 A product of Coding Works
-Designed, developed and maintained by Gaurav Sahitya (@sahityagaurav4210) and Manish Kumar (@kumarmanish6099).
+Designed, developed and maintained by Gaurav Sahitya (@sahityagaurav4210).
+Know me better at https://www.sgaurav.me

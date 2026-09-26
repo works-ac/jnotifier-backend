@@ -1,5 +1,6 @@
 package com.jnotifier.services.impl;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import com.jnotifier.payload.pojo.JobsListingsPojo;
@@ -51,12 +52,29 @@ public class ApplicationServiceImpl implements ApplicationService {
 
         application.setTitle(request.getTitle());
         application.setTags(request.getTags());
-        application.setApplicationStartDate(request.getApplicationStartDate());
-        application.setApplicationEndDate(request.getApplicationEndDate());
         application.setShortDescription(request.getShortDescription());
         application.setViewPageDescription(request.getViewPageDescription());
         application.setApplyLink(request.getApplyLink());
         application.setAdvertisementNo(request.getAdvNo());
+
+        // Info: Validating application's start and end dates.
+        LocalDate applicationStartDate = request.getApplicationStartDate();
+        LocalDate applicationEndDate = request.getApplicationEndDate();
+
+        if (!application.getApplicationStartDate().isEqual(request.getApplicationStartDate())) {
+            LocalDate today = LocalDate.now();
+            LocalDate pastCurrentDate = LocalDate.now().minusDays(10);
+
+            if (applicationStartDate.isBefore(today) && applicationStartDate.isBefore(pastCurrentDate))
+                throw new GenericException(ApiResponse.error("INVALID_APPLICATION_START_DATE",
+                        "Invalid application start date, You're not allowed to create jobs with application start date older than 10 days from today."));
+        }
+
+        if (!application.getApplicationEndDate().isEqual(request.getApplicationEndDate())) {
+            if (applicationEndDate.isBefore(applicationStartDate))
+                throw new GenericException(ApiResponse.error("INVALID_APPLICATION_END_DATE",
+                        "Invalid application end date, Application end date cannot be before the application start date."));
+        }
 
         if (request.getStatus() != null) {
             application.setStatus(request.getStatus());

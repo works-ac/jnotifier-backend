@@ -132,7 +132,8 @@ public class AdminJobController {
                         app.getUpdatedAt(),
                         app.getStatus(),
                         app.getViewPageDescription(),
-                        app.getAdvFileName()
+                        app.getAdvFileName(),
+                        app.getApplyLink()
                 ));
 
         return ResponseEntity.ok(ApiResponse.success(new PaginatedResponse<>(jobsPage)));
@@ -141,7 +142,52 @@ public class AdminJobController {
     @PutMapping("/applications/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Application>> updateApplication(@PathVariable Long id,
-                                                                      @Valid @RequestBody ApplicationRequest request) {
+                                                                      @Valid @ModelAttribute ApplicationRequest request,
+                                                                      @RequestParam(value = "file", required = false) MultipartFile file,
+                                                                      @RequestParam(value = "advFile", required = false) MultipartFile advFile) throws IOException {
+        //Info: Processing upcoming mark down file.
+        if (file != null && !file.isEmpty()) {
+            String originalFilename = file.getOriginalFilename();
+            String contentType = file.getContentType();
+
+            boolean hasMdExtension = originalFilename != null && originalFilename.toLowerCase().endsWith(".md");
+            boolean hasMdMimeType = "text/markdown".equalsIgnoreCase(contentType);
+            long fileSize = file.getSize() / (1024 * 1024);
+
+            if (!hasMdExtension && !hasMdMimeType)
+                throw new GenericException(ApiResponse.error("INVALID_FILE_EXT", "Please upload a markdown file."));
+
+            if (fileSize > 5)
+                throw new GenericException(ApiResponse.error("INVALID_FILE_SIZE", "Your file size is too large"));
+
+            byte[] fileBytes = file.getBytes();
+            String markdownContent = new String(fileBytes, StandardCharsets.UTF_8);
+
+            request.setViewPageDescription(markdownContent);
+        }
+
+        //Info: Processing upcoming advertisement PDF file.
+        if (advFile != null && !advFile.isEmpty()) {
+            String advFilename = advFile.getOriginalFilename();
+            String advContentType = advFile.getContentType();
+
+
+            boolean hasPdfExtension = advFilename != null && advFilename.toLowerCase().endsWith(".pdf");
+            boolean hasPdfMimeType = "application/pdf".equalsIgnoreCase(advContentType);
+            long advFileSize = advFile.getSize() / (1024 * 1024);
+
+            if (!hasPdfExtension && !hasPdfMimeType)
+                throw new GenericException(ApiResponse.error("INVALID_FILE_EXT", "Please upload a pdf file."));
+
+            if (advFileSize > 50)
+                throw new GenericException(ApiResponse.error("INVALID_FILE_SIZE", "Your file size is too large"));
+
+            if (!fileHelper.isValidPdf(advFile))
+                throw new GenericException(ApiResponse.error("INVALID_FILE_EXTENSION", "Invalid file extension"));
+
+            request.setAdvFileName("/uploads/" + fileStorageService.saveFile(advFile));
+        }
+
         Application updated = applicationService.update(id, request);
         return ResponseEntity.ok(ApiResponse.success(updated));
     }

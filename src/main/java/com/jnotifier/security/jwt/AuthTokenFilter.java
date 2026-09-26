@@ -62,6 +62,8 @@ public class AuthTokenFilter extends OncePerRequestFilter {
             if (requestPath.startsWith(publicBase + "/public/")
                     || requestPath.startsWith(publicBase + "/auth/")
                     || requestPath.startsWith(publicBase + "/app/")
+                    || requestPath.startsWith(publicBase + "/downloads/")
+                    || requestPath.equals("/")
                     || requestPath.equals("/error")) {
                 filterChain.doFilter(request, response);
                 return;

@@ -67,6 +67,7 @@ public class WebSecurityConfig {
                                 .requestMatchers(JNotifierConstants.API_BASE_URL + "/public/**").permitAll()
                                 .requestMatchers(JNotifierConstants.API_BASE_URL + "/downloads/**").permitAll()
                                 .requestMatchers("/error").permitAll()
+                                .requestMatchers("/").permitAll()
                                 .anyRequest().authenticated()
                 );
 
