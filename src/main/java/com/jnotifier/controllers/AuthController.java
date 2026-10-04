@@ -6,15 +6,22 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 
 import javax.imageio.ImageIO;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.jnotifier.app.JNotifierConstants;
+import com.jnotifier.app.JNotifierEnums;
+import com.jnotifier.helpers.CaptchaHelper;
+import com.jnotifier.helpers.EmailHelper;
+import com.jnotifier.helpers.OTPHelper;
+import com.jnotifier.payload.pojo.SimpleUserPojo;
+import com.jnotifier.payload.request.*;
+import com.jnotifier.payload.response.ServiceReply;
+import com.jnotifier.services.impl.RedisService;
+import com.jnotifier.services.impl.VerifyService;
 import jakarta.validation.Valid;
 
 import org.slf4j.Logger;
@@ -25,7 +32,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
-import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -37,12 +43,7 @@ import com.jnotifier.entity.ERole;
 import com.jnotifier.entity.Role;
 import com.jnotifier.entity.User;
 import com.jnotifier.entity.RefreshToken;
-import com.jnotifier.payload.request.LoginRequest;
-import com.jnotifier.payload.request.SignupRequest;
-import com.jnotifier.payload.request.TokenRefreshRequest;
-import com.jnotifier.payload.request.OtpRequest;
 import com.jnotifier.payload.response.JwtResponse;
-import com.jnotifier.payload.response.MessageResponse;
 import com.jnotifier.payload.response.TokenRefreshResponse;
 import com.jnotifier.payload.response.ApiResponse;
 import com.jnotifier.repository.RoleRepository;
@@ -52,288 +53,490 @@ import com.jnotifier.services.RefreshTokenService;
 import com.jnotifier.exception.GenericException;
 import com.jnotifier.exception.TokenRefreshException;
 
-@CrossOrigin(origins = "*", maxAge = 3600)
+
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping(JNotifierConstants.API_BASE_URL + "/auth")
 public class AuthController {
 
-  private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
+    private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
-  // Stores captchaId -> captchaCode
-  private static final Map<String, String> captchaStore = new ConcurrentHashMap<>();
+    @Value("${jnotifier.app.default-otp-enabled}")
+    private boolean defaultOtpEnabled;
 
-  // Stores username -> otpCode
-  private static final Map<String, String> otpStore = new ConcurrentHashMap<>();
+    @Autowired
+    AuthenticationManager authenticationManager;
 
-  @Value("${jnotifier.app.default-otp-enabled:true}")
-  private boolean defaultOtpEnabled;
+    @Autowired
+    UserRepository userRepository;
 
-  @Value("${jnotifier.app.jwtRefreshExpirationMs}")
-  private Long refreshTokenDurationMs;
+    @Autowired
+    RoleRepository roleRepository;
 
-  @Autowired
-  AuthenticationManager authenticationManager;
+    @Autowired
+    PasswordEncoder encoder;
 
-  @Autowired
-  UserRepository userRepository;
+    @Autowired
+    CaptchaHelper captchaHelper;
 
-  @Autowired
-  RoleRepository roleRepository;
+    @Autowired
+    JwtUtils jwtUtils;
 
-  @Autowired
-  PasswordEncoder encoder;
+    @Autowired
+    RefreshTokenService refreshTokenService;
 
-  @Autowired
-  JwtUtils jwtUtils;
+    @Autowired
+    private RedisService redisService;
 
-  @Autowired
-  RefreshTokenService refreshTokenService;
+    @Value("${notification.support.email}")
+    private String notificationSupportEmail;
 
-  @GetMapping("/captcha")
-  public ResponseEntity<ApiResponse<Map<String, String>>> getCaptcha() {
-    String captchaId = UUID.randomUUID().toString();
-    String captchaCode = generateRandomText();
-    captchaStore.put(captchaId, captchaCode);
+    @Autowired
+    private VerifyService verifyService;
 
-    logger.info("Captcha Code :: {}", captchaCode);
+    @Autowired
+    private EmailHelper emailHelper;
 
-    String captchaImageBase64 = generateCaptchaImage(captchaCode);
+    @Autowired
+    private OTPHelper otpHelper;
 
-    Map<String, String> response = new HashMap<>();
-    response.put("captchaId", captchaId);
-    response.put("captchaImage", captchaImageBase64);
+    private Map<String, String> getOtpPayload(User user, String otp) {
+        Map<String, String> payload = new HashMap<>();
 
-    return ResponseEntity.ok(ApiResponse.success(response));
-  }
+        payload.put("userName", user.getUsername());
+        payload.put("name", user.getFullname());
+        payload.put("subject", "Request for new OTP reg.");
+        payload.put("email", user.getEmail());
+        payload.put("supportEmail", notificationSupportEmail);
+        payload.put("otp", otp);
 
-  @PostMapping("/signin")
-  public ResponseEntity<ApiResponse<Map<String, String>>> authenticateUser(
-      @Valid @RequestBody LoginRequest loginRequest) {
-    // 1. Validate Captcha
-    String correctCaptcha = captchaStore.get(loginRequest.getCaptchaId());
-    if (correctCaptcha == null || !correctCaptcha.equalsIgnoreCase(loginRequest.getCaptchaValue())) {
-      return ResponseEntity
-          .badRequest()
-          .body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
-    }
-    captchaStore.remove(loginRequest.getCaptchaId());
-
-    // 2. Authenticate username and password credentials
-    Authentication authentication = authenticationManager.authenticate(
-        new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword()));
-
-    // 3. Generate OTP
-    String otpCode;
-    if (defaultOtpEnabled) {
-      otpCode = "123456";
-    } else {
-      otpCode = String.format("%06d", new Random().nextInt(999999));
+        return payload;
     }
 
-    otpStore.put(loginRequest.getUsername(), otpCode);
+    @GetMapping("/captcha")
+    public ResponseEntity<ApiResponse<Map<String, String>>> getCaptcha() {
+        String captchaId = UUID.randomUUID().toString();
+        String captchaCode = generateRandomText();
 
-    // Simulate sending OTP to user's registered email
-    User user = userRepository.findByUsername(loginRequest.getUsername())
-        .orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Username or Password is wrong.")));
+        String captchaImageBase64 = generateCaptchaImage(captchaCode);
 
-    logger.info("[OTP Verification] Generated OTP {} for user {}", otpCode, loginRequest.getUsername());
-    logger.info("[OTP Verification] Sending OTP email to {}", user.getEmail());
+        Map<String, String> response = new HashMap<>();
+        response.put("captchaId", captchaId);
+        response.put("captchaImage", captchaImageBase64);
 
-    Map<String, String> data = new HashMap<>();
-    data.put("username", loginRequest.getUsername());
-    data.put("status", "OTP_REQUIRED");
-    data.put("message", "OTP verification code has been generated. Please verify to complete sign-in.");
-
-    return ResponseEntity.ok(ApiResponse.success(data));
-  }
-
-  @PostMapping("/verify-otp")
-  public ResponseEntity<ApiResponse<JwtResponse>> verifyOtp(@Valid @RequestBody OtpRequest otpRequest) {
-    String correctOtp = otpStore.get(otpRequest.getUsername());
-    if (correctOtp == null || !correctOtp.equals(otpRequest.getOtpCode())) {
-      return ResponseEntity
-          .badRequest()
-          .body(ApiResponse.error("INVALID_OTP", "OTP is incorrect or expired."));
-    }
-    otpStore.remove(otpRequest.getUsername());
-
-    User user = userRepository.findByUsername(otpRequest.getUsername())
-        .orElseThrow(() -> new RuntimeException("User not found: " + otpRequest.getUsername()));
-
-    String jwt = jwtUtils.generateTokenFromUsername(user.getUsername());
-    RefreshToken refreshToken = refreshTokenService.createRefreshToken(user.getId());
-
-    List<String> roles = List.of(user.getRole().getName().name());
-
-    JwtResponse jwtResponse = new JwtResponse(jwt,
-        refreshToken.getToken(),
-        user.getId(),
-        user.getUsername(),
-        user.getEmail(),
-        roles);
-
-    ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken.getToken())
-        .httpOnly(true)
-        .secure(false)
-        .path("/")
-        .maxAge(refreshTokenDurationMs / 1000)
-        .build();
-
-    return ResponseEntity.ok()
-        .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(ApiResponse.success(jwtResponse));
-  }
-
-  @PostMapping("/signup")
-  public ResponseEntity<ApiResponse<MessageResponse>> registerUser(@Valid @RequestBody SignupRequest signUpRequest) {
-
-    String correctCaptcha = captchaStore.get(signUpRequest.getCaptchaId());
-    if (correctCaptcha == null || !correctCaptcha.equalsIgnoreCase(signUpRequest.getCaptchaValue())) {
-      return ResponseEntity
-          .badRequest()
-          .body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
-    }
-    captchaStore.remove(signUpRequest.getCaptchaId());
-
-    if (userRepository.existsByEmail(signUpRequest.getEmail())) {
-      return ResponseEntity
-          .badRequest()
-          .body(ApiResponse.error("BAD_REQUEST", "Error: Email is already in use!"));
+        captchaHelper.generateCaptcha(captchaId, captchaCode);
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    String requestedRole = signUpRequest.getRole();
-    if (requestedRole == null || requestedRole.trim().isEmpty()) {
-      requestedRole = "user";
+    @PostMapping("/signin")
+    public ResponseEntity<ApiResponse<Map<String, String>>> authenticateUser(
+            @Valid @RequestBody LoginRequest loginRequest) throws JsonProcessingException {
+        //1. Validate Captcha
+        String captchaId = loginRequest.getCaptchaId();
+        String captcha = loginRequest.getCaptchaValue();
+
+        if (!captchaHelper.validateCaptcha(captchaId, captcha)) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
+        }
+        captchaHelper.clearCaptcha(captchaId);
+
+        // 2. Authenticate username and password credentials
+        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(loginRequest.getUsername(),
+                loginRequest.getPassword()));
+
+        // 3. Generate OTP
+        String otpCode = "123456";
+
+        if (!defaultOtpEnabled) {
+            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
+        }
+
+        otpHelper.generateOTP(loginRequest.getUsername(), otpCode);
+
+        User user = userRepository.findByUsernameOrEmail(loginRequest.getUsername(), loginRequest.getUsername())
+                .orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Invalid credentials.")));
+
+        boolean isAccountSuspended = Optional.ofNullable(user.getIsSuspended()).orElse(false);
+        boolean isAccountDeleted = Optional.ofNullable(user.getIsDeleted()).orElse(false);
+
+        if (isAccountSuspended)
+            throw new GenericException(ApiResponse.error("ACCOUNT_ERR", "Can't login, account is in suspended mode."));
+        if (isAccountDeleted)
+            throw new GenericException(ApiResponse.error("ACCOUNT_ERR", "Can't login, account is deleted"));
+
+        Map<String, String> data = new HashMap<>();
+        data.put("username", loginRequest.getUsername());
+        data.put("email", user.getEmail());
+        data.put("status", "OTP_REQUIRED");
+        data.put("message", "OTP verification code has been generated. Please verify to complete sign-in.");
+
+        if (!defaultOtpEnabled) {
+            logger.info("[OTP Verification] Generated OTP for authentication purposes {} for user {}", otpCode, loginRequest.getUsername());
+
+            Map<String, String> content = getOtpPayload(user, otpCode);
+            emailHelper.sendEmailOTP(content);
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(data));
     }
 
-    Role userRole;
-    if (requestedRole.equalsIgnoreCase("admin")) {
-      // Admin role registration is protected and can only be done by SUPERADMIN
-      Authentication callerAuth = SecurityContextHolder.getContext().getAuthentication();
-      if (callerAuth == null ||
-          !callerAuth.isAuthenticated() ||
-          callerAuth instanceof AnonymousAuthenticationToken ||
-          callerAuth.getAuthorities().stream().noneMatch(a -> a.getAuthority().equals("ROLE_SUPERADMIN"))) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN)
-            .body(ApiResponse.error("FORBIDDEN", "Error: Only SUPERADMIN accounts can register new ADMIN users."));
-      }
-      userRole = roleRepository.findByName(ERole.ROLE_ADMIN)
-          .orElseThrow(() -> new RuntimeException("Error: ADMIN role not initialized in database."));
-    } else if (requestedRole.equalsIgnoreCase("superadmin")) {
-      userRole = roleRepository.findByName(ERole.ROLE_SUPERADMIN)
-          .orElseThrow(() -> new RuntimeException("Error: SUPERADMIN role not initialized in database."));
-    } else {
-      userRole = roleRepository.findByName(ERole.ROLE_USER)
-          .orElseThrow(() -> new RuntimeException("Error: USER role not initialized in database."));
+    @PostMapping("/resend-otp")
+    public ResponseEntity<ApiResponse<Object>> resendOtp(@Valid @RequestBody ResendOTPRequest resendOTPRequest)
+            throws JsonProcessingException {
+        Map<String, String> data = new HashMap<>();
+        User user = userRepository.findByUsernameOrEmail(resendOTPRequest.getUsername(), resendOTPRequest.getUsername()).orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Username or Password is wrong.")));
+        String otpCode = "123456";
+
+        if (!defaultOtpEnabled) {
+            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
+        }
+
+        otpHelper.generateOTP(resendOTPRequest.getUsername(), otpCode);
+        data.put("message", "OTP sent successfully");
+
+        if (!defaultOtpEnabled) {
+            logger.info("[OTP Verification] Generated OTP {} for user {}", otpCode, resendOTPRequest.getUsername());
+            Map<String, String> welcomeNotificationContent = getOtpPayload(user, otpCode);
+            emailHelper.sendEmailOTP(welcomeNotificationContent);
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(data));
     }
 
-    // Generate unique system-level username containing timestamp & name alphabets
-    String cleanName = signUpRequest.getFullname().toLowerCase().replaceAll("[^a-zA-Z]", "");
-    if (cleanName.isEmpty()) {
-      cleanName = "user";
-    }
-    String generatedUsername = cleanName + "_" + System.currentTimeMillis();
+    @PostMapping("/verify-email")
+    public ResponseEntity<ApiResponse<Object>> verifyEmail(@Valid @RequestBody EmailVerifyRequest emailVerifyRequest)
+            throws JsonProcessingException {
+        User user = userRepository.findByUsernameOrEmail(emailVerifyRequest.getEmail(), emailVerifyRequest.getEmail()).
+                orElseThrow(() -> new GenericException(ApiResponse.error("INVALID_CRED", "Invalid Credentials")));
 
-    // Create new user's account
-    User user = new User(
-        signUpRequest.getFullname(),
-        signUpRequest.getEmail(),
-        encoder.encode(signUpRequest.getPassword()),
-        signUpRequest.getDob(),
-        signUpRequest.getGender(),
-        signUpRequest.getMobile());
-    user.setUsername(generatedUsername);
-    user.setRole(userRole);
-    userRepository.save(user);
+        String otpCode = "123456";
 
-    return ResponseEntity.ok(ApiResponse
-        .success(new MessageResponse("User registered successfully with generated username: " + generatedUsername)));
-  }
+        if (!defaultOtpEnabled) {
+            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
+        }
+        otpHelper.generateOTP(emailVerifyRequest.getEmail(), otpCode);
 
-  @PostMapping("/refreshtoken")
-  public ResponseEntity<ApiResponse<TokenRefreshResponse>> refreshtoken(
-      @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
-      @Valid @RequestBody(required = false) TokenRefreshRequest request) {
+        if (!defaultOtpEnabled) {
+            Map<String, String> content = getOtpPayload(user, otpCode);
+            emailHelper.sendEmailOTP(content);
+        }
 
-    String requestRefreshToken = cookieRefreshToken;
-    if (requestRefreshToken == null || requestRefreshToken.trim().isEmpty()) {
-      if (request != null) {
-        requestRefreshToken = request.getRefreshToken();
-      }
+        return ResponseEntity.ok(ApiResponse.success(new SimpleUserPojo(user.getUsername(), user.getEmail())));
     }
 
-    if (requestRefreshToken == null || requestRefreshToken.trim().isEmpty()) {
-      throw new TokenRefreshException("", "Refresh token is missing from cookies and request body!");
+    @PostMapping("/forgot-pwd")
+    public ResponseEntity<ApiResponse<Object>> forgotPassword(@Valid @RequestBody EmailVerifyRequest emailVerifyRequest) {
+        User user = userRepository.findByUsernameOrEmail(emailVerifyRequest.getEmail(), emailVerifyRequest.getEmail()).
+                orElseThrow(() -> new GenericException(ApiResponse.error("INVALID_CRED", "Invalid Credentials")));
+
+        String oldHashedPwd = user.getPassword();
+        String newHashedPwd = encoder.encode(emailVerifyRequest.getPassword());
+
+        if (oldHashedPwd.equals(newHashedPwd))
+            throw new GenericException(ApiResponse.error("INVALID_CRED", "Please set a unique password as this matches with your current password."));
+
+        user.setPassword(newHashedPwd);
+        userRepository.save(user);
+        return ResponseEntity.ok(ApiResponse.success(new SimpleUserPojo(user.getUsername(), user.getEmail())));
     }
 
-    String finalToken = requestRefreshToken;
-    TokenRefreshResponse tokenRefreshResponse = refreshTokenService.findByToken(finalToken)
-        .map(refreshTokenService::verifyExpiration)
-        .map(RefreshToken::getUser)
-        .map(user -> {
-          String token = jwtUtils.generateTokenFromUsername(user.getUsername());
-          return new TokenRefreshResponse(token, finalToken);
-        })
-        .orElseThrow(() -> new TokenRefreshException(finalToken,
-            "Refresh token is not in database!"));
+    @PostMapping("/verify-otp")
+    public ResponseEntity<ApiResponse<Object>> verifyOtp(@Valid @RequestBody OtpRequest otpRequest) {
+        String verificationType = otpRequest.getVerificationType();
+        ServiceReply serviceReply;
 
-    ResponseCookie cookie = ResponseCookie.from("refreshToken", finalToken)
-        .httpOnly(true)
-        .secure(true)
-        .path("/api/v1")
-        .maxAge(refreshTokenDurationMs / 1000)
-        .build();
+        if (!otpHelper.validateOTP(otpRequest.getUsername(), otpRequest.getOtpCode())) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(ApiResponse.error("INVALID_OTP", "OTP is incorrect or expired."));
+        }
+        otpHelper.removeOTP(otpRequest.getUsername());
 
-    return ResponseEntity.ok()
-        .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(ApiResponse.success(tokenRefreshResponse));
-  }
+        JNotifierEnums verificationTypeEnum = JNotifierEnums.fromString(verificationType);
 
-  // --- Helper Methods ---
+        if (verificationTypeEnum == JNotifierEnums.LOGIN) {
+            serviceReply = verifyService.login(otpRequest.getUsername());
+            ResponseCookie refCookie = (ResponseCookie) serviceReply.getReply().get("refCookie");
+            ResponseCookie accessCookie = (ResponseCookie) serviceReply.getReply().get("accessCookie");
+            JwtResponse body = (JwtResponse) serviceReply.getReply().get("jwtResponse");
 
-  private String generateRandomText() {
-    String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    StringBuilder sb = new StringBuilder();
-    Random rnd = new Random();
-    while (sb.length() < 6) {
-      int index = (int) (rnd.nextFloat() * chars.length());
-      sb.append(chars.charAt(index));
+            return ResponseEntity.status(serviceReply.getHttpStatusCode())
+                    .header(HttpHeaders.SET_COOKIE, refCookie.toString())
+                    .header(HttpHeaders.SET_COOKIE, accessCookie.toString())
+                    .body(ApiResponse.success(body));
+        } else if (verificationTypeEnum == JNotifierEnums.EMAIL_VERIFY) {
+            serviceReply = verifyService.verifyEmail(otpRequest.getUsername());
+            Object response = serviceReply.getReply();
+
+            return ResponseEntity.status(serviceReply.getHttpStatusCode()).body(ApiResponse.success(response));
+        } else if (verificationTypeEnum == JNotifierEnums.FORGOT_PWD) {
+            serviceReply = verifyService.forgotPassword(otpRequest.getUsername());
+            java.lang.Object reply = serviceReply.getReply();
+            return ResponseEntity.status(serviceReply.getHttpStatusCode()).body(ApiResponse.success(reply));
+        } else {
+            return ResponseEntity.badRequest().body(ApiResponse.error("INVALID_VERIFICATION_TYPE", "Invalid verification type."));
+        }
     }
-    return sb.toString();
-  }
 
-  private String generateCaptchaImage(String captchaCode) {
-    try {
-      int width = 130;
-      int height = 40;
-      BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-      Graphics2D g2d = image.createGraphics();
+    @PostMapping("/signup")
+    public ResponseEntity<ApiResponse<Object>> registerUser(@Valid @RequestBody SignupRequest signUpRequest) throws JsonProcessingException {
+        String captchaId = signUpRequest.getCaptchaId();
+        String captcha = signUpRequest.getCaptcha();
 
-      // Draw background
-      g2d.setColor(Color.WHITE);
-      g2d.fillRect(0, 0, width, height);
+        if (signUpRequest.getIsPwd() == null || signUpRequest.getCategory() == null || signUpRequest.getCategory().isEmpty()) {
+            throw new GenericException(ApiResponse.error("INVALID_FORM_DATA", "Please fill all the required fields."));
+        }
 
-      // Draw noisy lines
-      Random rnd = new Random();
-      g2d.setColor(Color.LIGHT_GRAY);
-      for (int i = 0; i < 5; i++) {
-        g2d.drawLine(rnd.nextInt(width), rnd.nextInt(height), rnd.nextInt(width), rnd.nextInt(height));
-      }
+        if (!captchaHelper.validateCaptcha(captchaId, captcha)) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
+        }
+        captchaHelper.clearCaptcha(captchaId);
 
-      // Draw text
-      g2d.setColor(new Color(33, 150, 243));
-      g2d.setFont(new Font("Arial", Font.BOLD | Font.ITALIC, 22));
-      g2d.drawString(captchaCode, 15, 28);
+        if (userRepository.existsByEmail(signUpRequest.getEmail())) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(ApiResponse.error("BAD_REQUEST", "Error: Email is already in use!"));
+        }
 
-      g2d.dispose();
+        String requestedRole = signUpRequest.getRole();
+        if (requestedRole == null || requestedRole.trim().isEmpty()) {
+            requestedRole = "user";
+        }
 
-      ByteArrayOutputStream baos = new ByteArrayOutputStream();
-      ImageIO.write(image, "png", baos);
-      byte[] bytes = baos.toByteArray();
-      String base64Image = Base64.getEncoder().encodeToString(bytes);
-      return "data:image/png;base64," + base64Image;
-    } catch (IOException e) {
-      throw new RuntimeException("Error generating captcha image", e);
+        Role userRole;
+        if (requestedRole.equalsIgnoreCase("admin")) {
+            // Admin role registration is protected and can only be done by SUPERADMIN
+            Authentication callerAuth = SecurityContextHolder.getContext().getAuthentication();
+
+            if (!callerAuth.isAuthenticated() ||
+                    callerAuth.getAuthorities().stream().noneMatch(a -> a.getAuthority().equals("ROLE_SUPERADMIN"))) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error("FORBIDDEN", "Error: Only SUPERADMIN accounts can register new ADMIN users."));
+            }
+            userRole = roleRepository.findByName(ERole.ROLE_ADMIN)
+                    .orElseThrow(() -> new RuntimeException("Error: ADMIN role not initialized in database."));
+        } else if (requestedRole.equalsIgnoreCase("superadmin")) {
+            userRole = roleRepository.findByName(ERole.ROLE_SUPERADMIN)
+                    .orElseThrow(() -> new RuntimeException("Error: SUPERADMIN role not initialized in database."));
+        } else {
+            userRole = roleRepository.findByName(ERole.ROLE_USER)
+                    .orElseThrow(() -> new RuntimeException("Error: USER role not initialized in database."));
+        }
+
+        if (userRole.getName().name().equalsIgnoreCase(ERole.ROLE_SUPERADMIN.name()) ||
+                userRole.getName().name().equalsIgnoreCase(ERole.ROLE_SYSADMIN.name()))
+            throw new GenericException(ApiResponse.error("INVALID_ROLE", "Please enter a valid role"));
+
+        if (userRole.getName().name().equalsIgnoreCase(ERole.ROLE_ADMIN.name()) && (signUpRequest.getCompanyName() == null || signUpRequest.getAddress() == null))
+            throw new GenericException(ApiResponse.error("INVALID_USER", "Please fill all the required fields."));
+
+        // Generate unique system-level username containing timestamp & name alphabets
+        String cleanName = signUpRequest.getFullName().toLowerCase().replaceAll("[^a-zA-Z]", "");
+        if (cleanName.isEmpty()) {
+            cleanName = "user";
+        }
+
+        String generatedUsername = cleanName + "_" + System.currentTimeMillis();
+
+        // Create new user's account
+        User user = new User(
+                signUpRequest.getFullName(),
+                signUpRequest.getEmail(),
+                encoder.encode(signUpRequest.getPassword()),
+                signUpRequest.getDob(),
+                signUpRequest.getGender(),
+                signUpRequest.getMobile(), signUpRequest.getCategory(), signUpRequest.getIsPwd(), false);
+
+        user.setUsername(generatedUsername);
+        user.setRole(userRole);
+        userRepository.save(user);
+
+        Map<String, String> reply = new HashMap<>();
+        Map<String, Object> welcomeNotificationMsg = new HashMap<>();
+        Map<String, String> welcomeNotificationContent = new HashMap<>();
+        String otpCode = "123456";
+
+        if (!defaultOtpEnabled) {
+            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
+        }
+        otpHelper.generateOTP(generatedUsername, otpCode);
+
+        //Creating content object for welcome notification
+        welcomeNotificationContent.put("userName", user.getUsername());
+        welcomeNotificationContent.put("name", user.getFullname());
+        welcomeNotificationContent.put("subject", "Verification of newly created account reg.");
+        welcomeNotificationContent.put("email", user.getEmail());
+        welcomeNotificationContent.put("supportEmail", notificationSupportEmail);
+        welcomeNotificationContent.put("gender", user.getGender());
+        welcomeNotificationContent.put("category", user.getCategory());
+        welcomeNotificationContent.put("dob", user.getDob().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        welcomeNotificationContent.put("otp", otpCode);
+
+        //Creating actual welcome notification payload.
+        welcomeNotificationMsg.put("timestamp", System.currentTimeMillis());
+        welcomeNotificationMsg.put("content", welcomeNotificationContent);
+
+        reply.put("message", "User successfully registered!");
+        reply.put("username", generatedUsername);
+
+        redisService.publishWelcomeNotification(welcomeNotificationMsg);
+        return ResponseEntity.ok(ApiResponse
+                .success(reply));
     }
-  }
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<ApiResponse<TokenRefreshResponse>> refreshtoken(
+            @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
+            @Valid @RequestBody(required = false) TokenRefreshRequest request) {
+
+        String requestRefreshToken = cookieRefreshToken;
+        if (requestRefreshToken == null || requestRefreshToken.trim().isEmpty()) {
+            if (request != null) {
+                requestRefreshToken = request.getRefreshToken();
+            }
+        }
+
+        if (requestRefreshToken == null || requestRefreshToken.trim().isEmpty()) {
+            throw new TokenRefreshException("", "Refresh token is missing from cookies and request body!");
+        }
+
+        String finalToken = requestRefreshToken;
+        TokenRefreshResponse tokenRefreshResponse = refreshTokenService.findByToken(cookieRefreshToken)
+                .map(refreshTokenService::verifyExpiration)
+                .map(RefreshToken::getUser)
+                .map(user -> {
+                    String token = jwtUtils.generateTokenFromUsername(user.getUsername());
+                    return new TokenRefreshResponse(token, finalToken);
+                })
+                .orElseThrow(() -> new TokenRefreshException(finalToken,
+                        "Refresh token is not in database!"));
+
+        ResponseCookie refCookie = ResponseCookie.from("refreshToken", finalToken)
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("None")
+                .path(JNotifierConstants.API_BASE_URL + "/auth")
+                .build();
+
+        ResponseCookie accessCookie = ResponseCookie.from("accessToken", tokenRefreshResponse.getAccessToken())
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("None")
+                .path(JNotifierConstants.API_BASE_URL)
+                .build();
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, accessCookie.toString())
+                .body(ApiResponse.success(tokenRefreshResponse));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Void>> logout(@CookieValue(name = "refreshToken") String cookieRefreshToken,
+                                                    @CookieValue(name = "accessToken") String cookieAccessToken) {
+        RefreshToken token = refreshTokenService.findByToken(cookieRefreshToken).
+                orElseThrow(() -> new GenericException(ApiResponse.error("INVALID_TOKEN", "Invalid refresh token!")));
+
+        User user = token.getUser();
+        refreshTokenService.deleteByUserId(user.getId());
+
+        ResponseCookie refCookie = ResponseCookie.from("refreshToken", cookieRefreshToken)
+                .httpOnly(true)
+                .secure(true)
+                .path(JNotifierConstants.API_BASE_URL + "/auth")
+                .maxAge(0)
+                .sameSite("None")
+                .build();
+
+        ResponseCookie accessCookie = ResponseCookie.from("accessToken", cookieAccessToken)
+                .httpOnly(true)
+                .secure(true)
+                .path(JNotifierConstants.API_BASE_URL)
+                .maxAge(0)
+                .sameSite("None")
+                .build();
+
+        return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, refCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, accessCookie.toString()).build();
+    }
+
+    @PostMapping("/clear")
+    public ResponseEntity<ApiResponse<Void>> clearCookies(@CookieValue(name = "refreshToken") String cookieRefreshToken,
+                                                          @CookieValue(name = "accessToken") String cookieAccessToken) {
+        Optional<RefreshToken> refreshToken = refreshTokenService.findByToken(cookieRefreshToken);
+        if (refreshToken.isPresent())
+            throw new GenericException(ApiResponse.error("INVALID_AUTH_STATE", "Cannot clear cookies!"));
+
+        ResponseCookie refCookie = ResponseCookie.from("refreshToken", cookieRefreshToken)
+                .httpOnly(true)
+                .secure(true)
+                .path(JNotifierConstants.API_BASE_URL + "/auth")
+                .maxAge(0)
+                .sameSite("None")
+                .build();
+
+        ResponseCookie accessCookie = ResponseCookie.from("accessToken", cookieAccessToken)
+                .httpOnly(true)
+                .secure(true)
+                .path(JNotifierConstants.API_BASE_URL)
+                .maxAge(0)
+                .sameSite("None")
+                .build();
+
+        return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, refCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, accessCookie.toString()).build();
+    }
+
+    // --- Helper Methods ---
+
+    private String generateRandomText() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        StringBuilder sb = new StringBuilder();
+        Random rnd = new Random();
+
+        while (sb.length() < 6) {
+            int index = (int) (rnd.nextFloat() * chars.length());
+            sb.append(chars.charAt(index));
+        }
+
+        return sb.toString();
+    }
+
+    private String generateCaptchaImage(String captchaCode) {
+        try {
+            int width = 130;
+            int height = 40;
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2d = image.createGraphics();
+
+            // Draw background
+            g2d.setColor(Color.WHITE);
+            g2d.fillRect(0, 0, width, height);
+
+            // Draw noisy lines
+            Random rnd = new Random();
+            g2d.setColor(Color.LIGHT_GRAY);
+            for (int i = 0; i < 5; i++) {
+                g2d.drawLine(rnd.nextInt(width), rnd.nextInt(height), rnd.nextInt(width), rnd.nextInt(height));
+            }
+
+            // Draw text
+            g2d.setColor(new Color(33, 150, 243));
+            g2d.setFont(new Font("Arial", Font.BOLD | Font.ITALIC, 22));
+            g2d.drawString(captchaCode, 15, 28);
+
+            g2d.dispose();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", baos);
+            byte[] bytes = baos.toByteArray();
+            String base64Image = Base64.getEncoder().encodeToString(bytes);
+            return "data:image/png;base64," + base64Image;
+        } catch (IOException e) {
+            throw new RuntimeException("Error generating captcha image", e);
+        }
+    }
 }

@@ -25,11 +25,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jnotifier.controllers.AuthController;
+import com.jnotifier.helpers.CaptchaHelper;
+import com.jnotifier.helpers.OTPHelper;
 import com.jnotifier.payload.request.LoginRequest;
 import com.jnotifier.payload.request.OtpRequest;
 import com.jnotifier.payload.request.SignupRequest;
+import com.jnotifier.entity.User;
 import com.jnotifier.repository.UserRepository;
 import com.jnotifier.repository.RefreshTokenRepository;
+
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.jnotifier.services.impl.RedisService;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -38,6 +44,9 @@ public class AuthControllerTest {
 
   @Autowired
   private MockMvc mockMvc;
+
+  @MockBean
+  private RedisService redisService;
 
   @Autowired
   private UserRepository userRepository;
@@ -77,7 +86,7 @@ public class AuthControllerTest {
     String captchaId = (String) dataMap.get("captchaId");
 
     // Fetch the stored captcha code using reflection
-    Field captchaStoreField = AuthController.class.getDeclaredField("captchaStore");
+    Field captchaStoreField = CaptchaHelper.class.getDeclaredField("captchaStore");
     captchaStoreField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, String> captchaStore = (Map<String, String>) captchaStoreField.get(null);
@@ -86,13 +95,15 @@ public class AuthControllerTest {
 
     // 2. Signup public user (default: superadmin role)
     SignupRequest signupRequest = new SignupRequest();
-    signupRequest.setFullname("John Doe");
+    signupRequest.setFullName("John Doe");
     signupRequest.setEmail("john.doe@example.com");
     signupRequest.setPassword("securePassword123");
     signupRequest.setDob(LocalDate.of(1990, 1, 1));
     signupRequest.setGender("M");
     signupRequest.setMobile("1234567890");
-    signupRequest.setRole("superadmin");
+    signupRequest.setRole("user");
+    signupRequest.setIsPwd(false);
+    signupRequest.setCategory("GEN");
     signupRequest.setCaptchaId(captchaId);
     signupRequest.setCaptchaValue(captchaValue);
 
@@ -101,17 +112,20 @@ public class AuthControllerTest {
         .content(objectMapper.writeValueAsString(signupRequest)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
-        .andExpect(jsonPath("$.data.message").value(org.hamcrest.Matchers.containsString("User registered successfully")))
+        .andExpect(jsonPath("$.data.message").value(org.hamcrest.Matchers.containsString("User successfully registered!")))
         .andExpect(jsonPath("$.requestId").exists())
         .andReturn();
 
     String signupResponseStr = signupResult.getResponse().getContentAsString();
     Map<?, ?> signupResponseMap = objectMapper.readValue(signupResponseStr, Map.class);
     Map<?, ?> signupDataMap = (Map<?, ?>) signupResponseMap.get("data");
-    String message = (String) signupDataMap.get("message");
-    // Extract system-generated username
-    String generatedUsername = message.substring(message.lastIndexOf(":") + 2).trim();
+    String generatedUsername = (String) signupDataMap.get("username");
     assertThat(generatedUsername).isNotEmpty();
+
+    // Verify email for login
+    User registeredUser = userRepository.findByUsername(generatedUsername).orElseThrow();
+    registeredUser.setIsEmailVerified(true);
+    userRepository.save(registeredUser);
 
     // Get a new captcha for Signin
     Map<String, String> signinCaptcha = getNewCaptcha();
@@ -148,7 +162,7 @@ public class AuthControllerTest {
         .andExpect(jsonPath("$.data.username").value(generatedUsername));
 
     // Fetch the generated OTP code using reflection
-    Field otpStoreField = AuthController.class.getDeclaredField("otpStore");
+    Field otpStoreField = OTPHelper.class.getDeclaredField("otpStore");
     otpStoreField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, String> otpStore = (Map<String, String>) otpStoreField.get(null);
@@ -159,6 +173,7 @@ public class AuthControllerTest {
     OtpRequest badOtpRequest = new OtpRequest();
     badOtpRequest.setUsername(generatedUsername);
     badOtpRequest.setOtpCode("000000");
+    badOtpRequest.setVerificationType("LOGIN");
 
     mockMvc.perform(post("/api/v1/auth/verify-otp")
         .contentType(MediaType.APPLICATION_JSON)
@@ -171,6 +186,7 @@ public class AuthControllerTest {
     OtpRequest otpRequest = new OtpRequest();
     otpRequest.setUsername(generatedUsername);
     otpRequest.setOtpCode(otpCode);
+    otpRequest.setVerificationType("LOGIN");
 
     mockMvc.perform(post("/api/v1/auth/verify-otp")
         .contentType(MediaType.APPLICATION_JSON)
@@ -180,7 +196,7 @@ public class AuthControllerTest {
         .andExpect(jsonPath("$.data.accessToken").exists())
         .andExpect(jsonPath("$.data.refreshToken").exists())
         .andExpect(jsonPath("$.data.username").value(generatedUsername))
-        .andExpect(jsonPath("$.data.roles[0]").value("ROLE_SUPERADMIN"))
+        .andExpect(jsonPath("$.data.roles[0]").value("ROLE_USER"))
         .andExpect(cookie().exists("refreshToken"))
         .andExpect(cookie().httpOnly("refreshToken", true));
   }
@@ -189,13 +205,17 @@ public class AuthControllerTest {
   public void testAdminRoleCreationRestrictions() throws Exception {
     Map<String, String> captcha = getNewCaptcha();
     SignupRequest adminSignupRequest = new SignupRequest();
-    adminSignupRequest.setFullname("Admin User");
     adminSignupRequest.setEmail("admin@example.com");
+    adminSignupRequest.setFullName("Admin User");
     adminSignupRequest.setPassword("securePassword123");
     adminSignupRequest.setDob(LocalDate.of(1985, 5, 5));
     adminSignupRequest.setGender("F");
     adminSignupRequest.setMobile("9876543210");
     adminSignupRequest.setRole("admin");
+    adminSignupRequest.setIsPwd(false);
+    adminSignupRequest.setCategory("GEN");
+    adminSignupRequest.setCompanyName("CodingWorks");
+    adminSignupRequest.setAddress("Bangalore");
     adminSignupRequest.setCaptchaId(captcha.get("captchaId"));
     adminSignupRequest.setCaptchaValue(captcha.get("captchaValue"));
 
@@ -213,13 +233,17 @@ public class AuthControllerTest {
   public void testAdminRoleCreationBySuperadmin() throws Exception {
     Map<String, String> captcha = getNewCaptcha();
     SignupRequest adminSignupRequest = new SignupRequest();
-    adminSignupRequest.setFullname("Admin User");
+    adminSignupRequest.setFullName("Admin User");
     adminSignupRequest.setEmail("admin@example.com");
     adminSignupRequest.setPassword("securePassword123");
     adminSignupRequest.setDob(LocalDate.of(1985, 5, 5));
     adminSignupRequest.setGender("F");
     adminSignupRequest.setMobile("9876543210");
     adminSignupRequest.setRole("admin");
+    adminSignupRequest.setIsPwd(false);
+    adminSignupRequest.setCategory("GEN");
+    adminSignupRequest.setCompanyName("CodingWorks");
+    adminSignupRequest.setAddress("Bangalore");
     adminSignupRequest.setCaptchaId(captcha.get("captchaId"));
     adminSignupRequest.setCaptchaValue(captcha.get("captchaValue"));
 
@@ -242,7 +266,7 @@ public class AuthControllerTest {
     Map<?, ?> dataMap = (Map<?, ?>) responseMap.get("data");
     String captchaId = (String) dataMap.get("captchaId");
 
-    Field captchaStoreField = AuthController.class.getDeclaredField("captchaStore");
+    Field captchaStoreField = CaptchaHelper.class.getDeclaredField("captchaStore");
     captchaStoreField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, String> captchaStore = (Map<String, String>) captchaStoreField.get(null);
@@ -250,13 +274,15 @@ public class AuthControllerTest {
 
     // 2. Signup
     SignupRequest signupRequest = new SignupRequest();
-    signupRequest.setFullname("Cookie Tester");
+    signupRequest.setFullName("Cookie Tester");
     signupRequest.setEmail("cookie.tester@example.com");
     signupRequest.setPassword("cookiePass123");
     signupRequest.setDob(LocalDate.of(1990, 1, 1));
     signupRequest.setGender("M");
     signupRequest.setMobile("1234567890");
     signupRequest.setRole("user");
+    signupRequest.setIsPwd(false);
+    signupRequest.setCategory("GEN");
     signupRequest.setCaptchaId(captchaId);
     signupRequest.setCaptchaValue(captchaValue);
 
@@ -268,8 +294,12 @@ public class AuthControllerTest {
     String signupResponseStr = signupResult.getResponse().getContentAsString();
     Map<?, ?> signupResponseMap = objectMapper.readValue(signupResponseStr, Map.class);
     Map<?, ?> signupDataMap = (Map<?, ?>) signupResponseMap.get("data");
-    String message = (String) signupDataMap.get("message");
-    String generatedUsername = message.substring(message.lastIndexOf(":") + 2).trim();
+    String generatedUsername = (String) signupDataMap.get("username");
+
+    // Verify email for login
+    User registeredUser = userRepository.findByUsername(generatedUsername).orElseThrow();
+    registeredUser.setIsEmailVerified(true);
+    userRepository.save(registeredUser);
 
     // Get a new captcha for Signin
     Map<String, String> signinCaptcha = getNewCaptcha();
@@ -288,7 +318,7 @@ public class AuthControllerTest {
         .content(objectMapper.writeValueAsString(loginRequest)))
         .andExpect(status().isOk());
 
-    Field otpStoreField = AuthController.class.getDeclaredField("otpStore");
+    Field otpStoreField = OTPHelper.class.getDeclaredField("otpStore");
     otpStoreField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, String> otpStore = (Map<String, String>) otpStoreField.get(null);
@@ -298,6 +328,7 @@ public class AuthControllerTest {
     OtpRequest otpRequest = new OtpRequest();
     otpRequest.setUsername(generatedUsername);
     otpRequest.setOtpCode(otpCode);
+    otpRequest.setVerificationType("LOGIN");
 
     MvcResult verifyResult = mockMvc.perform(post("/api/v1/auth/verify-otp")
         .contentType(MediaType.APPLICATION_JSON)
@@ -310,7 +341,7 @@ public class AuthControllerTest {
     assertThat(refreshCookie).isNotNull();
 
     // 5. Refresh token using cookie
-    mockMvc.perform(post("/api/v1/auth/refreshtoken")
+    mockMvc.perform(post("/api/v1/auth/refresh-token")
         .cookie(refreshCookie))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
@@ -329,7 +360,7 @@ public class AuthControllerTest {
     String captchaId = (String) dataMap.get("captchaId");
 
     // Fetch the stored captcha code using reflection
-    Field captchaStoreField = AuthController.class.getDeclaredField("captchaStore");
+    Field captchaStoreField = CaptchaHelper.class.getDeclaredField("captchaStore");
     captchaStoreField.setAccessible(true);
     @SuppressWarnings("unchecked")
     Map<String, String> captchaStore = (Map<String, String>) captchaStoreField.get(null);
