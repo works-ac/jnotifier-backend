@@ -7,6 +7,7 @@ import com.jnotifier.payload.response.ServiceReply;
 import com.jnotifier.services.impl.MediaServiceImpl;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.jnotifier.helpers.CaptchaHelper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -20,8 +21,23 @@ public class MediaController {
     @Autowired
     private MediaServiceImpl mediaService;
 
+    @Autowired
+    private CaptchaHelper captchaHelper;
+
     @PostMapping("/add")
-    public ResponseEntity<ApiResponse<?>> addMedia(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<ApiResponse<?>> addMedia(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("captchaId") String captchaId,
+            @RequestParam("captcha") String captcha) {
+        if (captchaId == null || captchaId.trim().isEmpty() ||
+                captcha == null || captcha.trim().isEmpty() ||
+                !captchaHelper.validateCaptcha(captchaId.trim(), captcha.trim())) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
+        }
+        captchaHelper.clearCaptcha(captchaId.trim());
+
         ServiceReply reply = mediaService.addMedia(file);
         return ResponseEntity.status(reply.getHttpStatusCode()).body(ApiResponse.success(reply.getReply()));
     }

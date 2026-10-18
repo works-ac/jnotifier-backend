@@ -53,7 +53,12 @@ public class ApplicationServiceImpl implements ApplicationService {
         application.setTitle(request.getTitle());
         application.setTags(request.getTags());
         application.setShortDescription(request.getShortDescription());
-        application.setViewPageDescription(request.getViewPageDescription());
+        if (request.getViewPageDescription() != null) {
+            application.setViewPageDescription(request.getViewPageDescription());
+        }
+        if (request.getAdvFileName() != null) {
+            application.setAdvFileName(request.getAdvFileName());
+        }
         application.setApplyLink(request.getApplyLink());
         application.setAdvertisementNo(request.getAdvNo());
 
@@ -75,6 +80,9 @@ public class ApplicationServiceImpl implements ApplicationService {
                 throw new GenericException(ApiResponse.error("INVALID_APPLICATION_END_DATE",
                         "Invalid application end date, Application end date cannot be before the application start date."));
         }
+
+        application.setApplicationStartDate(applicationStartDate);
+        application.setApplicationEndDate(applicationEndDate);
 
         if (request.getStatus() != null) {
             application.setStatus(request.getStatus());

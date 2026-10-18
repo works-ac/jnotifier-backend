@@ -73,6 +73,12 @@ public class User extends BaseEntity {
     @Column(name = "is_deleted")
     private Boolean isDeleted = false;
 
+    @Column(name = "profile_picture", columnDefinition = "VARCHAR(255)")
+    private String profilePicture;
+
+    @Column(name = "profile_picture_type", columnDefinition = "VARCHAR(50)")
+    private String profilePictureType;
+
     public User() {
     }
 
@@ -224,5 +230,21 @@ public class User extends BaseEntity {
 
     public void setIsDeleted(Boolean isDeleted) {
         this.isDeleted = isDeleted;
+    }
+
+    public String getProfilePicture() {
+        return profilePicture;
+    }
+
+    public void setProfilePicture(String profilePicture) {
+        this.profilePicture = profilePicture;
+    }
+
+    public String getProfilePictureType() {
+        return profilePictureType;
+    }
+
+    public void setProfilePictureType(String profilePictureType) {
+        this.profilePictureType = profilePictureType;
     }
 }
