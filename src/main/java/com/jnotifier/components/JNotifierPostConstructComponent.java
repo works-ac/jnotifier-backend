@@ -22,6 +22,7 @@ public class JNotifierPostConstructComponent {
             jdbcTemplate.execute(CreateSchemaQuery.CREATE_MASTER_SCHEMA_QUERY);
             jdbcTemplate.execute(CreateSchemaQuery.UPDATE_ROLES_CHECK_CONSTRAINT);
             jdbcTemplate.execute(CreateSchemaQuery.UPDATE_USERS_DOB_NULLABLE);
+            jdbcTemplate.execute(CreateSchemaQuery.ADD_USERS_PROFILE_PICTURE_COLUMNS);
             logger.info("ALL SCHEMA QUERIES HAVE BEEN EXECUTED SUCCESSFULLY.");
         } catch (Exception e) {
             logger.warn("Schema initialization warning: {}", e.getMessage());

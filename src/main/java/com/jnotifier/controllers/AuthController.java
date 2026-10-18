@@ -507,26 +507,27 @@ public class AuthController {
 
     private String generateCaptchaImage(String captchaCode) {
         try {
-            int width = 130;
-            int height = 40;
+            int width = 147;
+            int height = 60;
             BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
             Graphics2D g2d = image.createGraphics();
 
             // Draw background
-            g2d.setColor(Color.WHITE);
+            g2d.setColor(Color.darkGray);
             g2d.fillRect(0, 0, width, height);
 
             // Draw noisy lines
             Random rnd = new Random();
             g2d.setColor(Color.LIGHT_GRAY);
-            for (int i = 0; i < 5; i++) {
+
+            for (int i = 0; i < 25; i++) {
                 g2d.drawLine(rnd.nextInt(width), rnd.nextInt(height), rnd.nextInt(width), rnd.nextInt(height));
             }
 
             // Draw text
-            g2d.setColor(new Color(33, 150, 243));
-            g2d.setFont(new Font("Arial", Font.BOLD | Font.ITALIC, 22));
-            g2d.drawString(captchaCode, 15, 28);
+            g2d.setColor(new Color(203, 213, 225));
+            g2d.setFont(new Font("Arial", Font.BOLD, 32));
+            g2d.drawString(captchaCode, 12, 35);
 
             g2d.dispose();
 

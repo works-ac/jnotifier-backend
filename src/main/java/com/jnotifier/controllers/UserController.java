@@ -36,6 +36,9 @@ public class UserController {
     @Autowired
     private UserServices services;
 
+    @Autowired
+    private com.jnotifier.services.core.ProfilePictureService profilePictureService;
+
     @GetMapping("/get-me")
     public ResponseEntity<ApiResponse<Object>> getMe(Authentication authentication) {
         Map<String, String> reply = new HashMap<>();
@@ -66,7 +69,54 @@ public class UserController {
         reply.put("mobile", user.getMobile());
         reply.put("dob", user.getDob() != null ? user.getDob().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : null);
         reply.put("gender", user.getGender());
+        reply.put("companyName", user.getCompanyName());
+        reply.put("address", user.getAddress());
+        reply.put("profilePicture", profilePictureService.getProfilePictureDataUrl(user));
 
+        return ResponseEntity.ok(ApiResponse.success(reply));
+    }
+
+    @PostMapping("/profile-picture")
+    public ResponseEntity<ApiResponse<Object>> uploadProfilePicture(Authentication authentication,
+                                                                    @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        User user = userRepository.findByUsername(authentication.getName()).orElseThrow(() -> new GenericException(ApiResponse.error(
+                "INVALID_CREDS", "Invalid credentials"
+        )));
+
+        profilePictureService.saveEncryptedProfilePicture(file, user);
+        String dataUrl = profilePictureService.getProfilePictureDataUrl(user);
+
+        Map<String, String> reply = new HashMap<>();
+        reply.put("message", "Profile picture uploaded successfully");
+        reply.put("profilePicture", dataUrl);
+        return ResponseEntity.ok(ApiResponse.success(reply));
+    }
+
+    @GetMapping("/profile-picture")
+    public ResponseEntity<byte[]> getDecryptedProfilePicture(Authentication authentication) {
+        User user = userRepository.findByUsername(authentication.getName()).orElseThrow(() -> new GenericException(ApiResponse.error(
+                "INVALID_CREDS", "Invalid credentials"
+        )));
+
+        com.jnotifier.services.core.ProfilePictureService.DecryptedPhoto photo = profilePictureService.getDecryptedProfilePicture(user);
+        if (photo == null || photo.bytes() == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType(photo.contentType()))
+                .body(photo.bytes());
+    }
+
+    @DeleteMapping("/profile-picture")
+    public ResponseEntity<ApiResponse<Object>> deleteProfilePicture(Authentication authentication) {
+        User user = userRepository.findByUsername(authentication.getName()).orElseThrow(() -> new GenericException(ApiResponse.error(
+                "INVALID_CREDS", "Invalid credentials"
+        )));
+
+        profilePictureService.deleteProfilePicture(user);
+        Map<String, String> reply = new HashMap<>();
+        reply.put("message", "Profile picture deleted successfully");
         return ResponseEntity.ok(ApiResponse.success(reply));
     }
 

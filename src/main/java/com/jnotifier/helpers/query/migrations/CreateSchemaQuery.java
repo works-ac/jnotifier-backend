@@ -4,6 +4,7 @@ public class CreateSchemaQuery {
     public static final String CREATE_MASTER_SCHEMA_QUERY = "CREATE SCHEMA IF NOT EXISTS masters AUTHORIZATION postgres;";
     public static final String UPDATE_ROLES_CHECK_CONSTRAINT = "ALTER TABLE IF EXISTS roles DROP CONSTRAINT IF EXISTS roles_name_check;";
     public static final String UPDATE_USERS_DOB_NULLABLE = "ALTER TABLE IF EXISTS users ALTER COLUMN dob DROP NOT NULL;";
+    public static final String ADD_USERS_PROFILE_PICTURE_COLUMNS = "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS profile_picture VARCHAR(255), ADD COLUMN IF NOT EXISTS profile_picture_type VARCHAR(50);";
 }
 
 
