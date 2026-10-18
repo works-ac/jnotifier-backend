@@ -4,106 +4,150 @@ import java.time.LocalDate;
 import jakarta.validation.constraints.*;
 
 public class SignupRequest {
-  @NotBlank
-  @Size(max = 100)
-  private String fullname;
+    @NotBlank
+    @Size(max = 100)
+    private String fullName;
 
-  @NotBlank
-  @Size(max = 50)
-  @Email
-  private String email;
+    @NotBlank
+    @Size(max = 50)
+    @Email
+    private String email;
 
-  @NotBlank
-  @Size(min = 6, max = 40)
-  private String password;
+    @NotBlank
+    @Size(min = 6, max = 40)
+    private String password;
 
-  private String mobile;
+    private String mobile;
 
-  @NotNull
-  private LocalDate dob;
+    @NotNull
+    private LocalDate dob;
 
-  @NotBlank
-  @Pattern(regexp = "^(M|F|T)$", message = "Gender must be M, F, or T")
-  private String gender;
+    @Pattern(regexp = "^(M|F|T)$", message = "Gender must be M, F, or T")
+    private String gender;
 
-  private String role;
+    @Pattern(regexp = "^(GEN|EWS|OBC|SC|ST)$", message = "Category must be gen, ews, obc, sc or st.")
+    private String category;
 
-  @NotBlank
-  private String captchaId;
+    private Boolean isPwd;
 
-  @NotBlank
-  private String captchaValue;
 
-  public String getFullname() {
-    return fullname;
-  }
+    @Pattern(regexp = "^[A-Za-z0-9\\s\\-_().,]{4,64}$", message = "Invalid company name")
+    @Size(min = 4, max = 64, message = "Company name is too long")
+    private String companyName;
 
-  public void setFullname(String fullname) {
-    this.fullname = fullname;
-  }
+    @Pattern(regexp = "^[A-Za-z0-9\\s\\-_().,#]{4,128}$", message = "Invalid address")
+    @Size(min = 4, max = 128, message = "Address is too long")
+    private String address;
 
-  public String getEmail() {
-    return email;
-  }
+    private String role;
 
-  public void setEmail(String email) {
-    this.email = email;
-  }
+    @NotBlank
+    private String captchaId;
 
-  public String getPassword() {
-    return password;
-  }
+    @NotBlank
+    private String captcha;
 
-  public void setPassword(String password) {
-    this.password = password;
-  }
+    public String getFullName() {
+        return fullName;
+    }
 
-  public String getMobile() {
-    return mobile;
-  }
+    public void setFullName(String fullName) {
+        this.fullName = fullName;
+    }
 
-  public void setMobile(String mobile) {
-    this.mobile = mobile;
-  }
+    public String getEmail() {
+        return email;
+    }
 
-  public LocalDate getDob() {
-    return dob;
-  }
+    public void setEmail(String email) {
+        this.email = email;
+    }
 
-  public void setDob(LocalDate dob) {
-    this.dob = dob;
-  }
+    public String getPassword() {
+        return password;
+    }
 
-  public String getGender() {
-    return gender;
-  }
+    public void setPassword(String password) {
+        this.password = password;
+    }
 
-  public void setGender(String gender) {
-    this.gender = gender;
-  }
+    public String getMobile() {
+        return mobile;
+    }
 
-  public String getRole() {
-    return role;
-  }
+    public void setMobile(String mobile) {
+        this.mobile = mobile;
+    }
 
-  public void setRole(String role) {
-    this.role = role;
-  }
+    public LocalDate getDob() {
+        return dob;
+    }
 
-  public String getCaptchaId() {
-    return captchaId;
-  }
+    public void setDob(LocalDate dob) {
+        this.dob = dob;
+    }
 
-  public void setCaptchaId(String captchaId) {
-    this.captchaId = captchaId;
-  }
+    public String getGender() {
+        return gender;
+    }
 
-  public String getCaptchaValue() {
-    return captchaValue;
-  }
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
 
-  public void setCaptchaValue(String captchaValue) {
-    this.captchaValue = captchaValue;
-  }
+    public String getRole() {
+        return role;
+    }
 
+    public void setRole(String role) {
+        this.role = role;
+    }
+
+    public String getCaptchaId() {
+        return captchaId;
+    }
+
+    public void setCaptchaId(String captchaId) {
+        this.captchaId = captchaId;
+    }
+
+    public String getCaptcha() {
+        return captcha;
+    }
+
+    public void setCaptchaValue(String captcha) {
+        this.captcha = captcha;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = category;
+    }
+
+    public Boolean getIsPwd() {
+        return isPwd;
+    }
+
+    public void setIsPwd(Boolean isPwd) {
+        this.isPwd = isPwd;
+    }
+
+    public String getCompanyName() {
+        return companyName;
+    }
+
+    public void setCompanyName(String companyName) {
+        this.companyName = companyName;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
 }
