@@ -9,7 +9,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-
 @Repository
 public interface MediaRepository extends JpaRepository<Media, Long> {
     @Query(MediaQueries.GET_ALL_ACTIVE_MEDIA)
@@ -17,4 +16,7 @@ public interface MediaRepository extends JpaRepository<Media, Long> {
 
     @Query(MediaQueries.GET_ALL_MEDIA_BY_CREATED_BY)
     Page<Media> findAllMediaByCreatedBy(@Param("createdBy") String createdBy, Pageable pageable);
+
+    @Query("SELECT COUNT(m) FROM Media m WHERE m.isDeleted = false OR m.isDeleted IS NULL")
+    long countActiveMedia();
 }

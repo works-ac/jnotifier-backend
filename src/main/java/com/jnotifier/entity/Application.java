@@ -15,7 +15,7 @@ import java.time.LocalDate;
 public class Application extends BaseEntity {
 
     @NotBlank
-    @Column(name = "title", columnDefinition = "VARCHAR(32)", nullable = false)
+    @Column(name = "title", columnDefinition = "VARCHAR(100)", nullable = false)
     private String title;
 
     @Column(name = "tags")

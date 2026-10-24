@@ -6,28 +6,33 @@ import java.time.LocalDate;
 import java.util.List;
 
 import com.jnotifier.app.JNotifierConstants;
+import com.jnotifier.entity.Application;
+import com.jnotifier.entity.Category;
 import com.jnotifier.exception.GenericException;
+import com.jnotifier.helpers.ExcelHelper;
 import com.jnotifier.helpers.FileHelper;
+import com.jnotifier.payload.request.ApplicationRequest;
 import com.jnotifier.payload.request.ApplicationStatusRequest;
+import com.jnotifier.payload.request.BulkApplicationRequest;
+import com.jnotifier.payload.request.CategoryRequest;
+import com.jnotifier.payload.response.ApiResponse;
+import com.jnotifier.payload.response.PaginatedResponse;
 import com.jnotifier.payload.response.ProtectedJobApplicationResponse;
+import com.jnotifier.services.ApplicationService;
+import com.jnotifier.services.CategoryService;
 import com.jnotifier.services.core.FileStorageService;
 import jakarta.validation.Valid;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
-
 import org.springframework.security.core.Authentication;
-import org.springframework.data.domain.Page;
-import com.jnotifier.entity.Application;
-import com.jnotifier.entity.Category;
-import com.jnotifier.payload.request.ApplicationRequest;
-import com.jnotifier.payload.request.CategoryRequest;
-import com.jnotifier.payload.response.ApiResponse;
-import com.jnotifier.payload.response.PaginatedResponse;
-import com.jnotifier.services.ApplicationService;
-import com.jnotifier.services.CategoryService;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
@@ -47,6 +52,9 @@ public class AdminJobController {
     @Autowired
     private FileHelper fileHelper;
 
+    @Autowired
+    private ExcelHelper excelHelper;
+
     // --- Job Application Endpoints ---
 
     @PostMapping("/applications")
@@ -54,7 +62,7 @@ public class AdminJobController {
     public ResponseEntity<ApiResponse<Application>> createApplication(@Valid @ModelAttribute ApplicationRequest request,
                                                                       @RequestParam(value = "file", required = false) MultipartFile file,
                                                                       @RequestParam(value = "advFile", required = false) MultipartFile advFile) throws IOException {
-        //Info: Processing upcoming mark down file.
+        // Info: Processing upcoming markdown file.
         if (file != null && !file.isEmpty()) {
             String originalFilename = file.getOriginalFilename();
             String contentType = file.getContentType();
@@ -75,11 +83,10 @@ public class AdminJobController {
             request.setViewPageDescription(markdownContent);
         }
 
-        //Info: Processing upcoming advertisement PDF file.
+        // Info: Processing upcoming advertisement PDF file.
         if (advFile != null && !advFile.isEmpty()) {
             String advFilename = advFile.getOriginalFilename();
             String advContentType = advFile.getContentType();
-
 
             boolean hasPdfExtension = advFilename != null && advFilename.toLowerCase().endsWith(".pdf");
             boolean hasPdfMimeType = "application/pdf".equalsIgnoreCase(advContentType);
@@ -111,6 +118,62 @@ public class AdminJobController {
 
         Application saved = applicationService.save(request);
         return ResponseEntity.ok(ApiResponse.success(saved));
+    }
+
+    @PostMapping("/applications/bulk")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<Application>>> createBulkApplications(
+            @Valid @RequestBody BulkApplicationRequest bulkRequest) {
+        List<ApplicationRequest> requests = bulkRequest.getApplications();
+        if (requests == null || requests.isEmpty()) {
+            throw new GenericException(ApiResponse.error("EMPTY_REQUEST", "Job applications list cannot be empty"));
+        }
+        if (requests.size() > 25) {
+            throw new GenericException(ApiResponse.error("EXCEEDS_MAX_LIMIT", "You can create at most 25 jobs at a time"));
+        }
+
+        List<Application> saved = applicationService.saveBulk(requests);
+        return ResponseEntity.ok(ApiResponse.success(saved));
+    }
+
+    @PostMapping("/applications/bulk/upload")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<ApplicationRequest>>> parseBulkExcel(
+            @RequestParam("file") MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new GenericException(ApiResponse.error("INVALID_FILE", "Please upload an excel file."));
+        }
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || (!originalFilename.toLowerCase().endsWith(".xlsx") && !originalFilename.toLowerCase().endsWith(".xls"))) {
+            throw new GenericException(ApiResponse.error("INVALID_FILE_TYPE", "Only Excel files (.xlsx) are supported."));
+        }
+
+        List<ApplicationRequest> parsed = excelHelper.parseJobApplicationsFromExcel(file.getInputStream());
+        return ResponseEntity.ok(ApiResponse.success(parsed));
+    }
+
+    @GetMapping("/applications/bulk/template")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('SUPERADMIN')")
+    public ResponseEntity<Resource> downloadBulkJobTemplate() {
+        Resource resource = new ClassPathResource("bulk-job-creation-template.xlsx");
+        if (!resource.exists()) {
+            throw new GenericException(ApiResponse.error("FILE_NOT_FOUND", "Template file not found on server"));
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"bulk-job-creation-template.xlsx\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(resource);
+    }
+
+    @PostMapping("/applications/{id}/files")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Application>> uploadApplicationFiles(
+            @PathVariable Long id,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "advFile", required = false) MultipartFile advFile) throws IOException {
+        Application updated = applicationService.uploadFiles(id, file, advFile);
+        return ResponseEntity.ok(ApiResponse.success(updated));
     }
 
     @GetMapping("/jobs")
@@ -145,7 +208,7 @@ public class AdminJobController {
                                                                       @Valid @ModelAttribute ApplicationRequest request,
                                                                       @RequestParam(value = "file", required = false) MultipartFile file,
                                                                       @RequestParam(value = "advFile", required = false) MultipartFile advFile) throws IOException {
-        //Info: Processing upcoming mark down file.
+        // Info: Processing upcoming markdown file.
         if (file != null && !file.isEmpty()) {
             String originalFilename = file.getOriginalFilename();
             String contentType = file.getContentType();
@@ -166,11 +229,10 @@ public class AdminJobController {
             request.setViewPageDescription(markdownContent);
         }
 
-        //Info: Processing upcoming advertisement PDF file.
+        // Info: Processing upcoming advertisement PDF file.
         if (advFile != null && !advFile.isEmpty()) {
             String advFilename = advFile.getOriginalFilename();
             String advContentType = advFile.getContentType();
-
 
             boolean hasPdfExtension = advFilename != null && advFilename.toLowerCase().endsWith(".pdf");
             boolean hasPdfMimeType = "application/pdf".equalsIgnoreCase(advContentType);

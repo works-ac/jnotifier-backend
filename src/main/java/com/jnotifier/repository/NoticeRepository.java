@@ -29,4 +29,7 @@ public interface NoticeRepository extends JpaRepository<Notice, Long> {
 
     @Query(NoticeQueries.GET_NOTICE_LISTINGS_DETAILS_BY_SEARCH_CRITERIA_PUBLIC)
     Page<NoticeListingsPojo> findAllNoticeListingsBySearchCriteriaPublic(@Param("isActive") Boolean isActive, @Param("tags") String tags, Pageable pageable);
+
+    @Query("SELECT COUNT(n) FROM Notice n WHERE n.isActive = false AND (n.isDeleted = false OR n.isDeleted IS NULL)")
+    long countArchivedNotices();
 }

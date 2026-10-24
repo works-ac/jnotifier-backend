@@ -14,6 +14,10 @@ public class NoticeListingsPojo {
     public NoticeListingsPojo() {
     }
 
+    public NoticeListingsPojo(Long id, String title, String tags, String noticeDescription, String createdBy, LocalDateTime createdAt) {
+        this(id, title, tags, noticeDescription, createdBy, createdAt, null);
+    }
+
     public NoticeListingsPojo(Long id, String title, String tags, String noticeDescription, String createdBy, LocalDateTime createdAt, Boolean isActive) {
         this.id = id;
         this.title = title;
