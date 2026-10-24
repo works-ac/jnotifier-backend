@@ -85,8 +85,11 @@ public class AuthTokenFilter extends OncePerRequestFilter {
             if (cookies == null) {
                 return null;
             }
+            String clientType = request.getHeader("X-Client-Type");
+            String cookieName = "ADMIN".equalsIgnoreCase(clientType) ? "admin_accessToken" : "accessToken";
+
             Optional<Cookie> accessCookie = Arrays.stream(cookies)
-                    .filter(cookie -> cookie.getName().equals("accessToken"))
+                    .filter(cookie -> cookie.getName().equals(cookieName))
                     .findFirst();
 
             headerAuth = accessCookie.map(Cookie::getValue).orElse(null);

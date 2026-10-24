@@ -25,7 +25,8 @@ public class NoticeQueries {
             "    n.tags, \n" +
             "    n.noticeDescription, \n" +
             "    u.fullname, \n" +
-            "    n.createdAt\n" +
+            "    n.createdAt, \n" +
+            "    n.isActive\n" +
             ")\n" +
             "FROM \n" +
             "    Notice n \n" +

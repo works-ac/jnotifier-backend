@@ -99,6 +99,13 @@ public class AuthController {
     @Autowired
     private OTPHelper otpHelper;
 
+    private boolean isUserAdmin(User user) {
+        return user != null && user.getRole() != null &&
+                (user.getRole().getName() == ERole.ROLE_ADMIN
+                 || user.getRole().getName() == ERole.ROLE_SUPERADMIN
+                 || user.getRole().getName() == ERole.ROLE_SYSADMIN);
+    }
+
     private Map<String, String> getOtpPayload(User user, String otp) {
         Map<String, String> payload = new HashMap<>();
 
@@ -129,6 +136,7 @@ public class AuthController {
 
     @PostMapping("/signin")
     public ResponseEntity<ApiResponse<Map<String, String>>> authenticateUser(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
             @Valid @RequestBody LoginRequest loginRequest) throws JsonProcessingException {
         //1. Validate Captcha
         String captchaId = loginRequest.getCaptchaId();
@@ -145,15 +153,6 @@ public class AuthController {
         authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(loginRequest.getUsername(),
                 loginRequest.getPassword()));
 
-        // 3. Generate OTP
-        String otpCode = "123456";
-
-        if (!defaultOtpEnabled) {
-            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
-        }
-
-        otpHelper.generateOTP(loginRequest.getUsername(), otpCode);
-
         User user = userRepository.findByUsernameOrEmail(loginRequest.getUsername(), loginRequest.getUsername())
                 .orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Invalid credentials.")));
 
@@ -164,6 +163,20 @@ public class AuthController {
             throw new GenericException(ApiResponse.error("ACCOUNT_ERR", "Can't login, account is in suspended mode."));
         if (isAccountDeleted)
             throw new GenericException(ApiResponse.error("ACCOUNT_ERR", "Can't login, account is deleted"));
+
+        // Enforce admin-only access for admin portal
+        if ("ADMIN".equalsIgnoreCase(clientType) && !isUserAdmin(user)) {
+            throw new GenericException(ApiResponse.error("ACCESS_DENIED", "Access Denied: Only administrators are permitted to log in to this portal."));
+        }
+
+        // 3. Generate OTP
+        String otpCode = "123456";
+
+        if (!defaultOtpEnabled) {
+            otpCode = String.format("%06d", new Random().nextInt(100000, 999999));
+        }
+
+        otpHelper.generateOTP(loginRequest.getUsername(), otpCode);
 
         Map<String, String> data = new HashMap<>();
         data.put("username", loginRequest.getUsername());
@@ -182,10 +195,17 @@ public class AuthController {
     }
 
     @PostMapping("/resend-otp")
-    public ResponseEntity<ApiResponse<Object>> resendOtp(@Valid @RequestBody ResendOTPRequest resendOTPRequest)
+    public ResponseEntity<ApiResponse<Object>> resendOtp(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @Valid @RequestBody ResendOTPRequest resendOTPRequest)
             throws JsonProcessingException {
         Map<String, String> data = new HashMap<>();
         User user = userRepository.findByUsernameOrEmail(resendOTPRequest.getUsername(), resendOTPRequest.getUsername()).orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Username or Password is wrong.")));
+
+        if ("ADMIN".equalsIgnoreCase(clientType) && !isUserAdmin(user)) {
+            throw new GenericException(ApiResponse.error("ACCESS_DENIED", "Access Denied: Only administrators are permitted to log in to this portal."));
+        }
+
         String otpCode = "123456";
 
         if (!defaultOtpEnabled) {
@@ -242,7 +262,9 @@ public class AuthController {
     }
 
     @PostMapping("/verify-otp")
-    public ResponseEntity<ApiResponse<Object>> verifyOtp(@Valid @RequestBody OtpRequest otpRequest) {
+    public ResponseEntity<ApiResponse<Object>> verifyOtp(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @Valid @RequestBody OtpRequest otpRequest) {
         String verificationType = otpRequest.getVerificationType();
         ServiceReply serviceReply;
 
@@ -256,7 +278,15 @@ public class AuthController {
         JNotifierEnums verificationTypeEnum = JNotifierEnums.fromString(verificationType);
 
         if (verificationTypeEnum == JNotifierEnums.LOGIN) {
-            serviceReply = verifyService.login(otpRequest.getUsername());
+            if ("ADMIN".equalsIgnoreCase(clientType)) {
+                User user = userRepository.findByUsernameOrEmail(otpRequest.getUsername(), otpRequest.getUsername())
+                        .orElseThrow(() -> new GenericException(ApiResponse.error("USER_NOT_FOUND", "Invalid credentials.")));
+                if (!isUserAdmin(user)) {
+                    throw new GenericException(ApiResponse.error("ACCESS_DENIED", "Access Denied: Only administrators are permitted to log in to this portal."));
+                }
+            }
+
+            serviceReply = verifyService.login(otpRequest.getUsername(), clientType);
             ResponseCookie refCookie = (ResponseCookie) serviceReply.getReply().get("refCookie");
             ResponseCookie accessCookie = (ResponseCookie) serviceReply.getReply().get("accessCookie");
             JwtResponse body = (JwtResponse) serviceReply.getReply().get("jwtResponse");
@@ -389,10 +419,13 @@ public class AuthController {
 
     @PostMapping("/refresh-token")
     public ResponseEntity<ApiResponse<TokenRefreshResponse>> refreshtoken(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
             @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
+            @CookieValue(name = "admin_refreshToken", required = false) String adminCookieRefreshToken,
             @Valid @RequestBody(required = false) TokenRefreshRequest request) {
 
-        String requestRefreshToken = cookieRefreshToken;
+        boolean isAdminClient = "ADMIN".equalsIgnoreCase(clientType);
+        String requestRefreshToken = isAdminClient ? adminCookieRefreshToken : cookieRefreshToken;
         if (requestRefreshToken == null || requestRefreshToken.trim().isEmpty()) {
             if (request != null) {
                 requestRefreshToken = request.getRefreshToken();
@@ -404,24 +437,30 @@ public class AuthController {
         }
 
         String finalToken = requestRefreshToken;
-        TokenRefreshResponse tokenRefreshResponse = refreshTokenService.findByToken(cookieRefreshToken)
+        TokenRefreshResponse tokenRefreshResponse = refreshTokenService.findByToken(finalToken)
                 .map(refreshTokenService::verifyExpiration)
                 .map(RefreshToken::getUser)
                 .map(user -> {
+                    if (isAdminClient && !isUserAdmin(user)) {
+                        throw new TokenRefreshException(finalToken, "Access Denied: Non-admin user cannot refresh admin session.");
+                    }
                     String token = jwtUtils.generateTokenFromUsername(user.getUsername());
                     return new TokenRefreshResponse(token, finalToken);
                 })
                 .orElseThrow(() -> new TokenRefreshException(finalToken,
                         "Refresh token is not in database!"));
 
-        ResponseCookie refCookie = ResponseCookie.from("refreshToken", finalToken)
+        String refreshCookieName = isAdminClient ? "admin_refreshToken" : "refreshToken";
+        String accessCookieName = isAdminClient ? "admin_accessToken" : "accessToken";
+
+        ResponseCookie refCookie = ResponseCookie.from(refreshCookieName, finalToken)
                 .httpOnly(true)
                 .secure(true)
                 .sameSite("None")
                 .path(JNotifierConstants.API_BASE_URL + "/auth")
                 .build();
 
-        ResponseCookie accessCookie = ResponseCookie.from("accessToken", tokenRefreshResponse.getAccessToken())
+        ResponseCookie accessCookie = ResponseCookie.from(accessCookieName, tokenRefreshResponse.getAccessToken())
                 .httpOnly(true)
                 .secure(true)
                 .sameSite("None")
@@ -435,15 +474,28 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout(@CookieValue(name = "refreshToken") String cookieRefreshToken,
-                                                    @CookieValue(name = "accessToken") String cookieAccessToken) {
-        RefreshToken token = refreshTokenService.findByToken(cookieRefreshToken).
-                orElseThrow(() -> new GenericException(ApiResponse.error("INVALID_TOKEN", "Invalid refresh token!")));
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
+            @CookieValue(name = "accessToken", required = false) String cookieAccessToken,
+            @CookieValue(name = "admin_refreshToken", required = false) String adminCookieRefreshToken,
+            @CookieValue(name = "admin_accessToken", required = false) String adminCookieAccessToken) {
 
-        User user = token.getUser();
-        refreshTokenService.deleteByUserId(user.getId());
+        boolean isAdminClient = "ADMIN".equalsIgnoreCase(clientType);
+        String activeRefreshToken = isAdminClient ? adminCookieRefreshToken : cookieRefreshToken;
+        String activeAccessToken = isAdminClient ? adminCookieAccessToken : cookieAccessToken;
 
-        ResponseCookie refCookie = ResponseCookie.from("refreshToken", cookieRefreshToken)
+        if (activeRefreshToken != null && !activeRefreshToken.trim().isEmpty()) {
+            refreshTokenService.findByToken(activeRefreshToken).ifPresent(token -> {
+                User user = token.getUser();
+                refreshTokenService.deleteByUserId(user.getId());
+            });
+        }
+
+        String refreshCookieName = isAdminClient ? "admin_refreshToken" : "refreshToken";
+        String accessCookieName = isAdminClient ? "admin_accessToken" : "accessToken";
+
+        ResponseCookie refCookie = ResponseCookie.from(refreshCookieName, activeRefreshToken != null ? activeRefreshToken : "")
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL + "/auth")
@@ -451,7 +503,7 @@ public class AuthController {
                 .sameSite("None")
                 .build();
 
-        ResponseCookie accessCookie = ResponseCookie.from("accessToken", cookieAccessToken)
+        ResponseCookie accessCookie = ResponseCookie.from(accessCookieName, activeAccessToken != null ? activeAccessToken : "")
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL)
@@ -464,13 +516,27 @@ public class AuthController {
     }
 
     @PostMapping("/clear")
-    public ResponseEntity<ApiResponse<Void>> clearCookies(@CookieValue(name = "refreshToken") String cookieRefreshToken,
-                                                          @CookieValue(name = "accessToken") String cookieAccessToken) {
-        Optional<RefreshToken> refreshToken = refreshTokenService.findByToken(cookieRefreshToken);
-        if (refreshToken.isPresent())
-            throw new GenericException(ApiResponse.error("INVALID_AUTH_STATE", "Cannot clear cookies!"));
+    public ResponseEntity<ApiResponse<Void>> clearCookies(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
+            @CookieValue(name = "accessToken", required = false) String cookieAccessToken,
+            @CookieValue(name = "admin_refreshToken", required = false) String adminCookieRefreshToken,
+            @CookieValue(name = "admin_accessToken", required = false) String adminCookieAccessToken) {
 
-        ResponseCookie refCookie = ResponseCookie.from("refreshToken", cookieRefreshToken)
+        boolean isAdminClient = "ADMIN".equalsIgnoreCase(clientType);
+        String activeRefreshToken = isAdminClient ? adminCookieRefreshToken : cookieRefreshToken;
+        String activeAccessToken = isAdminClient ? adminCookieAccessToken : cookieAccessToken;
+
+        if (activeRefreshToken != null && !activeRefreshToken.trim().isEmpty()) {
+            Optional<RefreshToken> refreshToken = refreshTokenService.findByToken(activeRefreshToken);
+            if (refreshToken.isPresent())
+                throw new GenericException(ApiResponse.error("INVALID_AUTH_STATE", "Cannot clear cookies!"));
+        }
+
+        String refreshCookieName = isAdminClient ? "admin_refreshToken" : "refreshToken";
+        String accessCookieName = isAdminClient ? "admin_accessToken" : "accessToken";
+
+        ResponseCookie refCookie = ResponseCookie.from(refreshCookieName, activeRefreshToken != null ? activeRefreshToken : "")
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL + "/auth")
@@ -478,7 +544,7 @@ public class AuthController {
                 .sameSite("None")
                 .build();
 
-        ResponseCookie accessCookie = ResponseCookie.from("accessToken", cookieAccessToken)
+        ResponseCookie accessCookie = ResponseCookie.from(accessCookieName, activeAccessToken != null ? activeAccessToken : "")
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL)

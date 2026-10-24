@@ -1,6 +1,7 @@
 package com.jnotifier.controllers;
 
 import com.jnotifier.app.JNotifierConstants;
+import com.jnotifier.helpers.CaptchaHelper;
 import com.jnotifier.payload.request.AddNewJobCategoryRequest;
 import com.jnotifier.payload.request.UpdateJobCategoryRequest;
 import com.jnotifier.payload.response.ApiResponse;
@@ -20,8 +21,19 @@ public class JobCategoriesMasterController {
     @Autowired
     private JobCategoriesServicesImpl jobCategoriesServices;
 
+    @Autowired
+    private CaptchaHelper captchaHelper;
+
     @PostMapping("/add")
     public ResponseEntity<ApiResponse<?>> addNewJobCategory(@Valid @RequestBody AddNewJobCategoryRequest request) {
+        if (request.getCaptchaId() != null || request.getCaptcha() != null) {
+            if (request.getCaptchaId() == null || request.getCaptchaId().trim().isEmpty() ||
+                request.getCaptcha() == null || request.getCaptcha().trim().isEmpty() ||
+                !captchaHelper.validateCaptcha(request.getCaptchaId().trim(), request.getCaptcha().trim())) {
+                return ResponseEntity.badRequest().body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
+            }
+            captchaHelper.clearCaptcha(request.getCaptchaId().trim());
+        }
         ServiceReply reply = jobCategoriesServices.addNewJobCategory(request);
         return ResponseEntity.status(reply.getHttpStatusCode()).body(ApiResponse.success(reply.getReply()));
     }
@@ -35,6 +47,14 @@ public class JobCategoriesMasterController {
 
     @PutMapping("/update")
     public ResponseEntity<ApiResponse<?>> updateJobCategory(@Valid @RequestBody UpdateJobCategoryRequest request) {
+        if (request.getCaptchaId() != null || request.getCaptcha() != null) {
+            if (request.getCaptchaId() == null || request.getCaptchaId().trim().isEmpty() ||
+                request.getCaptcha() == null || request.getCaptcha().trim().isEmpty() ||
+                !captchaHelper.validateCaptcha(request.getCaptchaId().trim(), request.getCaptcha().trim())) {
+                return ResponseEntity.badRequest().body(ApiResponse.error("INVALID_CAPTCHA", "Captcha is incorrect or expired."));
+            }
+            captchaHelper.clearCaptcha(request.getCaptchaId().trim());
+        }
         ServiceReply reply = jobCategoriesServices.updateJobCategory(request);
         return ResponseEntity.status(reply.getHttpStatusCode()).build();
     }
