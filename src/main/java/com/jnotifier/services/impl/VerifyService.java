@@ -38,6 +38,11 @@ public class VerifyService implements IVerifyService {
 
     @Override
     public ServiceReply login(String username) {
+        return login(username, null);
+    }
+
+    @Override
+    public ServiceReply login(String username, String clientType) {
         ServiceReply serviceReply = new ServiceReply();
         Map<String, Object> map = new HashMap<>();
         User user = userRepository.findByUsernameOrEmail(username, username)
@@ -59,14 +64,18 @@ public class VerifyService implements IVerifyService {
                 user.getEmail(),
                 roles);
 
-        ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken.getToken())
+        boolean isAdminClient = "ADMIN".equalsIgnoreCase(clientType);
+        String refreshCookieName = isAdminClient ? "admin_refreshToken" : "refreshToken";
+        String accessCookieName = isAdminClient ? "admin_accessToken" : "accessToken";
+
+        ResponseCookie cookie = ResponseCookie.from(refreshCookieName, refreshToken.getToken())
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL + "/auth")
                 .sameSite("None")
                 .build();
 
-        ResponseCookie accessCookie = ResponseCookie.from("accessToken", jwtResponse.getAccessToken())
+        ResponseCookie accessCookie = ResponseCookie.from(accessCookieName, jwtResponse.getAccessToken())
                 .httpOnly(true)
                 .secure(true)
                 .path(JNotifierConstants.API_BASE_URL)

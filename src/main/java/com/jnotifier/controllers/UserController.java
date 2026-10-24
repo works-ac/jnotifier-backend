@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -40,12 +41,23 @@ public class UserController {
     private com.jnotifier.services.core.ProfilePictureService profilePictureService;
 
     @GetMapping("/get-me")
-    public ResponseEntity<ApiResponse<Object>> getMe(Authentication authentication) {
+    public ResponseEntity<ApiResponse<Object>> getMe(
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            Authentication authentication) {
         Map<String, String> reply = new HashMap<>();
         String role = authentication.getAuthorities().stream()
                 .findFirst()
                 .map(GrantedAuthority::getAuthority)
                 .orElse(null);
+
+        if ("ADMIN".equalsIgnoreCase(clientType)) {
+            boolean isAdmin = role != null &&
+                    (role.equals("ROLE_ADMIN") || role.equals("ROLE_SUPERADMIN") || role.equals("ROLE_SYSADMIN"));
+            if (!isAdmin) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error("ACCESS_DENIED", "Access Denied: Only administrators are permitted."));
+            }
+        }
 
         reply.put("message", "Authenticated");
         reply.put("role", role);

@@ -19,6 +19,13 @@ public class UpdateJobCategoryRequest extends AddNewJobCategoryRequest {
         this.isDeleted = isDeleted;
     }
 
+    public UpdateJobCategoryRequest(Long jobCategoryId, String jobCategoryName, Boolean isActive, Boolean isDeleted, String captchaId, String captcha) {
+        super(jobCategoryName, captchaId, captcha);
+        this.jobCategoryId = jobCategoryId;
+        this.isActive = isActive;
+        this.isDeleted = isDeleted;
+    }
+
     public Long getJobCategoryId() {
         return jobCategoryId;
     }

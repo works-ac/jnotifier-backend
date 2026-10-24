@@ -28,4 +28,7 @@ public interface ApplicationRepository extends JpaRepository<Application, Long> 
 
     @Query(ApplicationQueries.GET_ALL_JOB_LISTINGS_BY_SEARCH_CRITERIA)
     Page<JobsListingsPojo> findAllJobListingsBySearchCriteria(@Param("status") Boolean status, @Param("tags") String tags, Pageable pageable);
+
+    @Query("SELECT COUNT(a) FROM Application a WHERE a.status = false")
+    long countByStatusFalse();
 }
